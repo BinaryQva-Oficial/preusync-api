@@ -2,9 +2,9 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: auth.service.js
- * Versión: v2.2.0
- * Descripción: Servicio de autenticación con protección de fallback automático
- *              ante fallos de red/DNS en nodos secundarios de Supabase.
+ * Versión: v2.3.0
+ * Descripción: Servicio de autenticación con detección automática de errores
+ *              'fetch failed' / DNS y fallback inmediato a DB1 (Edu).
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
@@ -33,7 +33,12 @@ export async function signUp(username, password, userData) {
   let existingUser = null;
   try {
     const res = await dbAuth.from('profiles').select('username').ilike('username', username.trim()).maybeSingle();
-    existingUser = res.data;
+    if (res.error && (res.error.message.includes('fetch failed') || res.error.message.includes('ENOTFOUND'))) {
+      const fallbackRes = await (supabaseAdmin || supabase).from('profiles').select('username').ilike('username', username.trim()).maybeSingle();
+      existingUser = fallbackRes.data;
+    } else {
+      existingUser = res.data;
+    }
   } catch (e) {
     const fallbackRes = await (supabaseAdmin || supabase).from('profiles').select('username').ilike('username', username.trim()).maybeSingle();
     existingUser = fallbackRes.data;
@@ -45,7 +50,7 @@ export async function signUp(username, password, userData) {
     let existingId = null;
     try {
       const res = await dbAuth.from('profiles').select('id_card').eq('id_card', userData.idCard).maybeSingle();
-      existingId = res.data;
+      if (!res.error) existingId = res.data;
     } catch (e) {}
 
     if (existingId) throw new Error('El número de carnet ya está registrado');
@@ -112,9 +117,15 @@ export async function signUp(username, password, userData) {
   let insertError = null;
   try {
     const res = await dbAuth.from('profiles').upsert(profile);
-    if (res.error) insertError = res.error;
+    if (res.error && (res.error.message.includes('fetch failed') || res.error.message.includes('ENOTFOUND'))) {
+      log(`⚠️ dbAuth inalcanzable (${res.error.message}). Ejecutando fallback en DB1 (Edu)...`, 'WARN');
+      const fallbackRes = await (supabaseAdmin || supabase).from('profiles').upsert(profile);
+      if (fallbackRes.error) insertError = fallbackRes.error;
+    } else if (res.error) {
+      insertError = res.error;
+    }
   } catch (e) {
-    log(`⚠️ dbAuth no respondió. Ejecutando fallback de perfil en DB1 (Edu)...`, 'WARN');
+    log(`⚠️ dbAuth no respondió. Ejecutando fallback en DB1 (Edu)...`, 'WARN');
     const fallbackRes = await (supabaseAdmin || supabase).from('profiles').upsert(profile);
     if (fallbackRes.error) insertError = fallbackRes.error;
   }
@@ -144,7 +155,12 @@ export async function login(username, password) {
   let userExists = null;
   try {
     const res = await dbAuth.from('profiles').select('id').ilike('username', username.trim()).maybeSingle();
-    userExists = res.data;
+    if (res.error && (res.error.message.includes('fetch failed') || res.error.message.includes('ENOTFOUND'))) {
+      const fallbackRes = await (supabaseAdmin || supabase).from('profiles').select('id').ilike('username', username.trim()).maybeSingle();
+      userExists = fallbackRes.data;
+    } else {
+      userExists = res.data;
+    }
   } catch (e) {
     const fallbackRes = await (supabaseAdmin || supabase).from('profiles').select('id').ilike('username', username.trim()).maybeSingle();
     userExists = fallbackRes.data;
@@ -166,7 +182,12 @@ export async function login(username, password) {
   let profile = null;
   try {
     const res = await dbAuth.from('profiles').select('*').ilike('username', username.trim()).maybeSingle();
-    profile = res.data;
+    if (res.error && (res.error.message.includes('fetch failed') || res.error.message.includes('ENOTFOUND'))) {
+      const fallbackRes = await (supabaseAdmin || supabase).from('profiles').select('*').ilike('username', username.trim()).maybeSingle();
+      profile = fallbackRes.data;
+    } else {
+      profile = res.data;
+    }
   } catch (e) {
     const fallbackRes = await (supabaseAdmin || supabase).from('profiles').select('*').ilike('username', username.trim()).maybeSingle();
     profile = fallbackRes.data;
@@ -220,7 +241,12 @@ export async function getUserByUsername(username) {
   let data = null;
   try {
     const res = await dbAuth.from('profiles').select('*').ilike('username', username).maybeSingle();
-    data = res.data;
+    if (res.error && (res.error.message.includes('fetch failed') || res.error.message.includes('ENOTFOUND'))) {
+      const fallbackRes = await (supabaseAdmin || supabase).from('profiles').select('*').ilike('username', username).maybeSingle();
+      data = fallbackRes.data;
+    } else {
+      data = res.data;
+    }
   } catch (e) {
     const fallbackRes = await (supabaseAdmin || supabase).from('profiles').select('*').ilike('username', username).maybeSingle();
     data = fallbackRes.data;
@@ -241,7 +267,12 @@ export async function updateUser(userId, updateData) {
   let existing = null;
   try {
     const res = await dbAuth.from('profiles').select('*').eq('id', userId).single();
-    existing = res.data;
+    if (res.error && (res.error.message.includes('fetch failed') || res.error.message.includes('ENOTFOUND'))) {
+      const fallbackRes = await (supabaseAdmin || supabase).from('profiles').select('*').eq('id', userId).single();
+      existing = fallbackRes.data;
+    } else {
+      existing = res.data;
+    }
   } catch (e) {
     const fallbackRes = await (supabaseAdmin || supabase).from('profiles').select('*').eq('id', userId).single();
     existing = fallbackRes.data;
@@ -254,7 +285,7 @@ export async function updateUser(userId, updateData) {
   allowedFields.forEach(f => { if (updateData[f] !== undefined) updated[f] = updateData[f]; });
 
   if (updateData.username && updateData.username !== existing.username) {
-    const { data: conflict } = await dbAuth
+    const { data: conflict } = await (dbAuth || supabaseAdmin)
       .from('profiles')
       .select('id')
       .ilike('username', updateData.username)
@@ -319,7 +350,12 @@ export async function checkUsernameExists(username) {
   let data = null;
   try {
     const res = await dbAuth.from('profiles').select('username').ilike('username', username).maybeSingle();
-    data = res.data;
+    if (res.error && (res.error.message.includes('fetch failed') || res.error.message.includes('ENOTFOUND'))) {
+      const fallbackRes = await (supabaseAdmin || supabase).from('profiles').select('username').ilike('username', username).maybeSingle();
+      data = fallbackRes.data;
+    } else {
+      data = res.data;
+    }
   } catch (e) {
     const fallbackRes = await (supabaseAdmin || supabase).from('profiles').select('username').ilike('username', username).maybeSingle();
     data = fallbackRes.data;
