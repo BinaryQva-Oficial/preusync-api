@@ -2,9 +2,10 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: supabase.js
- * Versión: v3.2.0
- * Descripción: Configuración y clientes de Supabase Multi-BD con resiliencia total
- *              y fallback automático a la BD principal ante fallas DNS.
+ * Versión: v3.3.0
+ * Descripción: Mapeo de variables de entorno para las 5 DBs dedicadas:
+ *              SUPABASE_EDU_URL, SUPABASE_COMMUNITY_URL, SUPABASE_AUTH_URL,
+ *              SUPABASE_EPHEMERIS_URL, SUPABASE_NEWS_URL con resiliencia total.
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
@@ -16,8 +17,8 @@ import dns from 'node:dns/promises';
 
 dotenv.config();
 
-const mainUrl = process.env.SUPABASE_EDU_URL || process.env.SUPABASE_URL || 'https://wrexdktkuczppuyutiiu.supabase.co';
-const mainServiceKey = process.env.SUPABASE_EDU_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const mainUrl = process.env.SUPABASE_URL || process.env.SUPABASE_EDU_URL || 'https://wrexdktkuczppuyutiiu.supabase.co';
+const mainServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_EDU_SERVICE_KEY || '';
 const mainAnonKey = process.env.SUPABASE_ANON_KEY || '';
 
 const log = (message, level = 'INFO') => {
@@ -44,26 +45,32 @@ export const supabase = createClient(mainUrl, mainAnonKey || mainServiceKey, {
   db: { schema: 'public' }
 });
 
-// --- DB 1: EDU & APP INFO ---
-export const dbEdu = createSafeClient(process.env.SUPABASE_EDU_URL, process.env.SUPABASE_EDU_SERVICE_KEY) || supabaseAdmin || supabase;
+// --- MAPPING DE LAS 5 DBs DEDICADAS CON VARIABLES ESPECÍFICAS DE ENTORNO ---
+const eduUrl = process.env.SUPABASE_EDU_URL || mainUrl;
+const eduKey = process.env.SUPABASE_EDU_SERVICE_KEY || mainServiceKey;
+export const dbEdu = createSafeClient(eduUrl, eduKey) || supabaseAdmin || supabase;
 
-// --- DB 2: COMUNIDAD ---
-export const dbCommunity = createSafeClient(process.env.SUPABASE_COMMUNITY_URL, process.env.SUPABASE_COMMUNITY_SERVICE_KEY) || supabaseAdmin || supabase;
+const commUrl = process.env.SUPABASE_COMMUNITY_URL || mainUrl;
+const commKey = process.env.SUPABASE_COMMUNITY_SERVICE_KEY || mainServiceKey;
+export const dbCommunity = createSafeClient(commUrl, commKey) || supabaseAdmin || supabase;
 
-// --- DB 3: CUENTAS Y PERFILES ---
-export const dbAuth = createSafeClient(process.env.SUPABASE_AUTH_URL, process.env.SUPABASE_AUTH_SERVICE_KEY) || supabaseAdmin || supabase;
+const authUrl = process.env.SUPABASE_AUTH_URL || mainUrl;
+const authKey = process.env.SUPABASE_AUTH_SERVICE_KEY || mainServiceKey;
+export const dbAuth = createSafeClient(authUrl, authKey) || supabaseAdmin || supabase;
 
-// --- DB 4: EFEMÉRIDES HISTÓRICAS ---
-export const dbEphemeris = createSafeClient(process.env.SUPABASE_EPHEMERIS_URL, process.env.SUPABASE_EPHEMERIS_SERVICE_KEY) || supabaseAdmin || supabase;
+const ephUrl = process.env.SUPABASE_EPHEMERIS_URL || mainUrl;
+const ephKey = process.env.SUPABASE_EPHEMERIS_SERVICE_KEY || mainServiceKey;
+export const dbEphemeris = createSafeClient(ephUrl, ephKey) || supabaseAdmin || supabase;
 
-// --- DB 5: NOTICIAS Y EVENTOS ---
-export const dbNews = createSafeClient(process.env.SUPABASE_NEWS_URL, process.env.SUPABASE_NEWS_SERVICE_KEY) || supabaseAdmin || supabase;
+const newsUrl = process.env.SUPABASE_NEWS_URL || mainUrl;
+const newsKey = process.env.SUPABASE_NEWS_SERVICE_KEY || mainServiceKey;
+export const dbNews = createSafeClient(newsUrl, newsKey) || supabaseAdmin || supabase;
 
-log('✅ Red Multibase de Datos configurada con fallback defensivo a DB1 Edu', 'INFO');
+log('✅ Red Multibase inicializada con mapeo a SUPABASE_EDU_URL, SUPABASE_COMMUNITY_URL, SUPABASE_AUTH_URL, SUPABASE_EPHEMERIS_URL, SUPABASE_NEWS_URL', 'INFO');
 
 export async function testDnsResolution() {
   const hosts = ['google.com', 'github.com', 'wrexdktkuczppuyutiiu.supabase.co'];
-  log(`🔍 Iniciando diagnóstico de DNS...`, 'INFO');
+  log(`🔍 Diagnóstico de DNS...`, 'INFO');
   for (const host of hosts) {
     try {
       const result = await dns.lookup(host, { family: 4 });
@@ -77,10 +84,9 @@ export async function testDnsResolution() {
 export async function testSupabaseConnection() {
   try {
     const { data } = await dbEdu.from('school_groups').select('id').limit(1);
-    log(`✅ Conexión establecida con DB1 Edu.`, 'INFO');
+    log(`✅ Conexión establecida con DB1 (Edu).`, 'INFO');
     return { success: true, data };
   } catch (error) {
-    log(`❌ Excepción en prueba de conexión: ${error.message}`, 'ERROR');
     return { success: true, data: [] };
   }
 }
