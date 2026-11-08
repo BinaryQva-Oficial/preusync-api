@@ -2,9 +2,9 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: vote.service.js
- * Versión: v2.0.0
+ * Versión: v2.1.0
  * Descripción: Servicio de interacción mediante votos (likes/dislikes) en dbCommunity
- *              con normalización flexible de voteType (1/2/0, up/down/none, like/dislike/none).
+ *              con selección exclusiva de 'author_id' para prevenir errores SQL.
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
@@ -19,7 +19,7 @@ const log = (message, level = 'INFO', metadata = {}) => {
 };
 
 const logError = (message, error, metadata = {}) => {
-  log(`${message}: ${error.message}`, 'ERROR', { ...metadata, stack: error.stack });
+  log(`${message}: ${error ? error.message : 'Error desconocido'}`, 'ERROR', { ...metadata, stack: error?.stack });
 };
 
 /**
@@ -47,12 +47,19 @@ export async function setVote(postId, userId, rawVoteType) {
   // 1. Comprobación de seguridad: No se permite votar en publicaciones propias
   const { data: post, error: postError } = await client
     .from('posts')
-    .select('author_id, author')
+    .select('author_id')
     .eq('id', postId)
-    .single();
+    .maybeSingle();
 
-  if (postError || !post) throw new Error('Publicación no encontrada');
-  if (post.author_id === userId) throw new Error('No puedes votar en tus propias publicaciones');
+  if (postError || !post) {
+    logError(`❌ Publicación no encontrada en DB2 (${postId})`, postError);
+    throw new Error('Publicación no encontrada');
+  }
+
+  if (post.author_id === userId) {
+    log(`⛔ Intento de autovoto por usuario ${userId} en su propio post ${postId}`, 'WARN');
+    throw new Error('No puedes votar en tus propias publicaciones');
+  }
 
   // 2. Ejecutar la función RPC de votación en dbCommunity
   const { data, error } = await client.rpc('handle_vote', {
