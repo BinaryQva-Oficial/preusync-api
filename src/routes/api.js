@@ -236,6 +236,15 @@ router.post('/posts/:id/vote', authenticate, async (req, res) => {
   catch (error) { res.status(400).json({ success: false, error: error.message }); }
 });
 
+router.get('/profile/votes', authenticate, async (req, res) => {
+  try {
+    const data = await voteService.getUserVotes(req.user.id);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // --- NEWS ---
 router.get('/news/top', async (req, res) => {
   try {
