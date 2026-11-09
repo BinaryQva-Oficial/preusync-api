@@ -2,31 +2,76 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: post.service.js
- * Versión: v2.0.0
- * Descripción: Servicio de gestión de publicaciones (posts).
- *              Vinculado al nodo especializado dbCommunity (DB 2).
+ * Versión: v3.0.0
+ * Descripción: Servicio de gestión de publicaciones con resolución enriquecida
+ *              multibase (DB2 Community <-> DB3 Auth) para nombres de usuario reales.
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
  */
 
-import { dbCommunity } from '../config/supabase.js';
+import { dbCommunity, dbAuth, supabaseAdmin, supabase } from '../config/supabase.js';
 import { uploadImage } from '../utils/storage.js';
 
 const log = (message, level = 'INFO', metadata = {}) => {
   const timestamp = new Date().toISOString();
   const metaStr = Object.keys(metadata).length ? ` | ${JSON.stringify(metadata)}` : '';
-  console.log(`[${timestamp}] [PostService] [${level}] ${message}${metaStr}`);
+  console.log(`[${timestamp}] [PostService-DB2] [${level}] ${message}${metaStr}`);
 };
 
 const logError = (message, error, metadata = {}) => {
-  log(`${message}: ${error.message}`, 'ERROR', { ...metadata, stack: error.stack });
+  log(`${message}: ${error ? error.message : 'Error desconocido'}`, 'ERROR', { ...metadata, stack: error?.stack });
 };
+
+// ==================== HELPER MULTIBASE: NOMBRES DE USUARIO ====================
+
+/**
+ * Consulta en DB3 (dbAuth) los nombres de usuario y avatares reales para los author_id de DB2.
+ */
+async function enrichPostsWithAuthors(posts) {
+  if (!posts || !Array.isArray(posts) || posts.isEmpty) return posts || [];
+
+  const authorIds = [...new Set(posts.map(p => p.author_id).filter(id => id))];
+  const profileMap = new Map();
+
+  if (authorIds.length > 0) {
+    try {
+      const clientAuth = dbAuth || supabaseAdmin || supabase;
+      const { data: profiles } = await clientAuth
+        .from('profiles')
+        .select('id, username, avatar_url')
+        .in('id', authorIds);
+
+      if (profiles && Array.isArray(profiles)) {
+        profiles.forEach(pr => profileMap.set(pr.id, pr));
+      }
+    } catch (err) {
+      logError('⚠️ Error al consultar nombres de autor en DB3 (dbAuth)', err);
+    }
+  }
+
+  return posts.map(row => {
+    const prof = profileMap.get(row.author_id);
+    return {
+      id: row.id,
+      title: row.title || '',
+      details: row.details || '',
+      imageUrl: row.image_url || '',
+      author: prof?.username || row.author || 'Comunidad',
+      authorAvatar: prof?.avatar_url || row.author_avatar || '',
+      likes: row.likes || 0,
+      dislikes: row.dislikes || 0,
+      score: row.score || 0,
+      userVote: 'none',
+      createdAt: row.created_at
+    };
+  });
+}
 
 // ==================== OPERACIONES CRUD ====================
 
 /**
- * Registra una nueva publicación de la comunidad.
+ * Registra una nueva publicación de la comunidad en DB2.
  */
 export async function addPost(postData, userId) {
   if (!postData.title || !postData.details) {
@@ -44,6 +89,7 @@ export async function addPost(postData, userId) {
     }
   }
 
+  const client = dbCommunity || supabaseAdmin || supabase;
   const post = {
     title: postData.title.trim(),
     details: postData.details.trim(),
@@ -51,15 +97,15 @@ export async function addPost(postData, userId) {
     author_id: userId
   };
 
-  log(`💾 Creando nuevo post para usuario: ${userId}`);
+  log(`💾 Creando nuevo post en DB2 para usuario: ${userId}`);
 
-  const { data, error } = await dbCommunity.from('posts').insert(post).select('id').single();
+  const { data, error } = await client.from('posts').insert(post).select('id').single();
   if (error) {
     logError(`❌ Error al crear post para el usuario: ${userId}`, error);
     throw new Error(`Fallo al publicar: ${error.message}`);
   }
 
-  log(`✅ Post publicado con éxito (ID: ${data.id}) por usuario: ${userId}`, 'INFO');
+  log(`✅ Post publicado con éxito en DB2 (ID: ${data.id}) por usuario: ${userId}`, 'INFO');
   return { id: data.id, imageUrl };
 }
 
@@ -67,7 +113,8 @@ export async function addPost(postData, userId) {
  * Modifica el contenido de un post existente si el usuario es el autor.
  */
 export async function editPost(postId, userId, updateData) {
-  const { data: post, error: fetchError } = await dbCommunity
+  const client = dbCommunity || supabaseAdmin || supabase;
+  const { data: post, error: fetchError } = await client
     .from('posts')
     .select('author_id')
     .eq('id', postId)
@@ -76,7 +123,7 @@ export async function editPost(postId, userId, updateData) {
   if (fetchError) throw new Error('Publicación no encontrada');
   if (post.author_id !== userId) throw new Error('Acción no autorizada');
 
-  const { error } = await dbCommunity
+  const { error } = await client
     .from('posts')
     .update(updateData)
     .eq('id', postId);
@@ -88,69 +135,33 @@ export async function editPost(postId, userId, updateData) {
 // ==================== CONSULTAS Y LISTADOS ====================
 
 /**
- * Obtiene publicaciones destacadas ordenadas por fecha o score.
+ * Obtiene publicaciones destacadas resolviendo nombres de usuario reales desde DB3.
  */
 export async function getTopPosts(limit = 5, userId = null) {
-  let { data, error } = await dbCommunity
+  const client = dbCommunity || supabaseAdmin || supabase;
+  const { data, error } = await client
     .from('posts')
-    .select('*, profiles(username, avatar_url)')
+    .select('*')
     .order('created_at', { ascending: false })
     .limit(limit);
 
-  if (error) {
-    const plain = await dbCommunity.from('posts').select('*').order('created_at', { ascending: false }).limit(limit);
-    if (plain.error) throw new Error(`Error al obtener posts top: ${plain.error.message}`);
-    data = plain.data;
-  }
-
-  data = data || [];
-
-  return data.map(row => ({
-    id: row.id,
-    title: row.title || '',
-    details: row.details || '',
-    imageUrl: row.image_url || '',
-    author: row.profiles ? row.profiles.username : 'Comunidad',
-    authorAvatar: row.profiles ? row.profiles.avatar_url : '',
-    likes: row.likes || 0,
-    dislikes: row.dislikes || 0,
-    score: row.score || 0,
-    userVote: 'none',
-    createdAt: row.created_at
-  }));
+  if (error) throw new Error(`Error al obtener posts top: ${error.message}`);
+  return await enrichPostsWithAuthors(data || []);
 }
 
 /**
- * Recupera un rango de publicaciones ordenadas por fecha de creación.
+ * Recupera un rango de publicaciones resolviendo nombres de usuario reales desde DB3.
  */
 export async function getPostsRange(start = 0, count = 10, userId = null) {
-  let { data, error } = await dbCommunity
+  const client = dbCommunity || supabaseAdmin || supabase;
+  const { data, error } = await client
     .from('posts')
-    .select('*, profiles(username, avatar_url)')
+    .select('*')
     .order('created_at', { ascending: false })
     .range(start, start + count - 1);
 
-  if (error) {
-    const plain = await dbCommunity.from('posts').select('*').order('created_at', { ascending: false }).range(start, start + count - 1);
-    if (plain.error) throw new Error(`Error al obtener rango de posts: ${plain.error.message}`);
-    data = plain.data;
-  }
-
-  data = data || [];
-
-  return data.map(row => ({
-    id: row.id,
-    title: row.title || '',
-    details: row.details || '',
-    imageUrl: row.image_url || '',
-    author: row.profiles ? row.profiles.username : 'Comunidad',
-    authorAvatar: row.profiles ? row.profiles.avatar_url : '',
-    likes: row.likes || 0,
-    dislikes: row.dislikes || 0,
-    score: row.score || 0,
-    userVote: 'none',
-    createdAt: row.created_at
-  }));
+  if (error) throw new Error(`Error al obtener rango de posts: ${error.message}`);
+  return await enrichPostsWithAuthors(data || []);
 }
 
 /**
@@ -159,44 +170,25 @@ export async function getPostsRange(start = 0, count = 10, userId = null) {
 export async function getPostsByAuthor(authorId, start = 0, count = 10) {
   if (!authorId) throw new Error('Se requiere el ID del autor');
 
-  let { data, error } = await dbCommunity
+  const client = dbCommunity || supabaseAdmin || supabase;
+  const { data, error } = await client
     .from('posts')
-    .select('*, profiles(username, avatar_url)')
+    .select('*')
     .eq('author_id', authorId)
     .order('created_at', { ascending: false })
     .range(start, start + count - 1);
 
-  if (error) {
-    const plain = await dbCommunity.from('posts').select('*').eq('author_id', authorId).order('created_at', { ascending: false }).range(start, start + count - 1);
-    if (plain.error) throw new Error(`Fallo al consultar publicaciones personales: ${plain.error.message}`);
-    data = plain.data;
-  }
-
-  log(`📊 Consultados ${data?.length || 0} posts del autor: ${authorId}`, 'INFO');
-
-  return (data || []).map(row => ({
-    id: row.id,
-    title: row.title || '',
-    details: row.details || '',
-    imageUrl: row.image_url || '',
-    author: row.profiles ? row.profiles.username : 'Usuario',
-    authorAvatar: row.profiles ? row.profiles.avatar_url : '',
-    likes: row.likes || 0,
-    dislikes: row.dislikes || 0,
-    score: row.score || 0,
-    createdAt: row.created_at
-  }));
+  if (error) throw new Error(`Fallo al consultar publicaciones personales: ${error.message}`);
+  return await enrichPostsWithAuthors(data || []);
 }
 
 // ==================== ESTADÍSTICAS Y MANTENIMIENTO ====================
 
-/**
- * Calcula contadores acumulados de actividad para un perfil de usuario.
- */
 export async function getUserStats(userId) {
   if (!userId) throw new Error('ID de usuario obligatorio');
+  const client = dbCommunity || supabaseAdmin || supabase;
 
-  const { count: postCount, error: postError } = await dbCommunity
+  const { count: postCount, error: postError } = await client
     .from('posts')
     .select('*', { count: 'exact', head: true })
     .eq('author_id', userId);
@@ -206,7 +198,7 @@ export async function getUserStats(userId) {
     return { postCount: 0, totalLikes: 0, totalDislikes: 0 };
   }
 
-  const { data: sums } = await dbCommunity
+  const { data: sums } = await client
     .from('posts')
     .select('likes')
     .eq('author_id', userId);
@@ -218,16 +210,12 @@ export async function getUserStats(userId) {
     });
   }
 
-  log(`📊 Estadísticas finales: posts=${postCount}, likes=${totalLikes}`, 'INFO');
-
   return { postCount: postCount || 0, totalLikes, totalDislikes: 0 };
 }
 
-/**
- * Elimina una publicación. Requiere comprobación de autoría.
- */
 export async function deletePost(postId, userId) {
-  const { data: post, error: fetchError } = await dbCommunity
+  const client = dbCommunity || supabaseAdmin || supabase;
+  const { data: post, error: fetchError } = await client
     .from('posts')
     .select('author_id')
     .eq('id', postId)
@@ -236,16 +224,14 @@ export async function deletePost(postId, userId) {
   if (fetchError) throw new Error('Publicación inexistente');
   if (post.author_id !== userId) throw new Error('Borrador no autorizado');
 
-  const { error } = await dbCommunity.from('posts').delete().eq('id', postId);
+  const { error } = await client.from('posts').delete().eq('id', postId);
   if (error) throw new Error('Fallo al eliminar de la DB');
   return { success: true };
 }
 
-/**
- * Registra una denuncia sobre un post.
- */
 export async function reportPost(postId, userId, reason = '') {
-  const { data: post, error: fetchError } = await dbCommunity
+  const client = dbCommunity || supabaseAdmin || supabase;
+  const { data: post, error: fetchError } = await client
     .from('posts')
     .select('id')
     .eq('id', postId)
@@ -253,7 +239,7 @@ export async function reportPost(postId, userId, reason = '') {
 
   if (fetchError) throw new Error('Post no encontrado');
 
-  const { error } = await dbCommunity
+  const { error } = await client
     .from('reports')
     .insert({
       post_id: postId,
@@ -265,27 +251,15 @@ export async function reportPost(postId, userId, reason = '') {
   return { success: true };
 }
 
-/**
- * Obtiene un post individual por su ID único.
- */
 export async function getPostById(postId) {
-  const { data, error } = await dbCommunity
+  const client = dbCommunity || supabaseAdmin || supabase;
+  const { data, error } = await client
     .from('posts')
-    .select('*, profiles(username, avatar_url)')
+    .select('*')
     .eq('id', postId)
     .single();
 
-  if (error) throw new Error('Post no disponible');
-  return {
-    id: data.id,
-    title: data.title || '',
-    details: data.details || '',
-    imageUrl: data.image_url || '',
-    author: data.profiles ? data.profiles.username : 'Comunidad',
-    authorAvatar: data.profiles ? data.profiles.avatar_url : '',
-    likes: data.likes || 0,
-    dislikes: data.dislikes || 0,
-    score: data.score || 0,
-    createdAt: data.created_at
-  };
+  if (error || !data) throw new Error('Post no disponible');
+  const enriched = await enrichPostsWithAuthors([data]);
+  return enriched[0];
 }
