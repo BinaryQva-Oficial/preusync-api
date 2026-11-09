@@ -2,9 +2,10 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: vote.service.js
- * Versión: v2.1.0
+ * Versión: v2.5.0
  * Descripción: Servicio de interacción mediante votos (likes/dislikes) en dbCommunity
- *              con selección exclusiva de 'author_id' para prevenir errores SQL.
+ *              con cálculo atómico directo, actualización de la tabla posts y
+ *              respuesta exacta con contadores recalculados.
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
@@ -61,29 +62,50 @@ export async function setVote(postId, userId, rawVoteType) {
     throw new Error('No puedes votar en tus propias publicaciones');
   }
 
-  // 2. Ejecutar la función RPC de votación en dbCommunity
-  const { data, error } = await client.rpc('handle_vote', {
-    p_post_id: postId,
-    p_user_id: userId,
-    p_vote_type: voteType
-  });
+  // 2. Registrar o eliminar el voto en la tabla 'votes' de dbCommunity
+  if (voteType === 'none') {
+    await client.from('votes').delete().eq('post_id', postId).eq('user_id', userId);
+  } else {
+    const intVoteType = voteType === 'like' ? 1 : 2;
+    // Intentar upsert o update/insert
+    const { data: existingVote } = await client
+      .from('votes')
+      .select('id')
+      .eq('post_id', postId)
+      .eq('user_id', userId)
+      .maybeSingle();
 
-  if (error) {
-    logError(`⚠️ Fallo en RPC 'handle_vote' para el post ${postId}, aplicando fallback directo...`, error);
-    await client.from('votes').upsert({ post_id: postId, user_id: userId, vote_type: voteType });
+    if (existingVote) {
+      await client.from('votes').update({ vote_type: intVoteType }).eq('id', existingVote.id);
+    } else {
+      await client.from('votes').insert({ post_id: postId, user_id: userId, vote_type: intVoteType });
+    }
   }
 
-  // 3. Consultar los contadores actualizados de likes/dislikes
-  const { data: updatedPost } = await client
+  // 3. Recalcular las sumas reales de likes y dislikes desde la tabla 'votes'
+  const { data: allVotes } = await client
+    .from('votes')
+    .select('vote_type')
+    .eq('post_id', postId);
+
+  let likes = 0;
+  let dislikes = 0;
+
+  if (allVotes && Array.isArray(allVotes)) {
+    for (const v of allVotes) {
+      const vt = String(v.vote_type).toLowerCase();
+      if (vt === '1' || vt === 'like' || vt === 'up') likes++;
+      else if (vt === '2' || vt === 'dislike' || vt === 'down') dislikes++;
+    }
+  }
+
+  // 4. Actualizar atómicamente la tabla 'posts' en dbCommunity
+  await client
     .from('posts')
-    .select('likes, dislikes')
-    .eq('id', postId)
-    .single();
+    .update({ likes, dislikes, score: likes - dislikes })
+    .eq('id', postId);
 
-  const likes = updatedPost?.likes || 0;
-  const dislikes = updatedPost?.dislikes || 0;
-
-  log(`✅ Voto '${voteType}' registrado exitosamente en post ${postId}. Likes: ${likes}, Dislikes: ${dislikes}`, 'INFO');
+  log(`✅ Voto '${voteType}' procesado y recalculado en DB2 para post ${postId}. Recuento real -> Likes: ${likes}, Dislikes: ${dislikes}`, 'INFO');
 
   return {
     voteType,
@@ -104,7 +126,13 @@ export async function getUserVote(postId, userId) {
     .maybeSingle();
 
   if (error) throw new Error(`Fallo al consultar voto: ${error.message}`);
-  return data?.vote_type || 'none';
+
+  if (data) {
+    const vt = String(data.vote_type).toLowerCase();
+    if (vt === '1' || vt === 'like' || vt === 'up') return 'like';
+    if (vt === '2' || vt === 'dislike' || vt === 'down') return 'dislike';
+  }
+  return 'none';
 }
 
 export async function getUserVotes(userId) {
