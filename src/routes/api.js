@@ -2,9 +2,10 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: api.js
- * Versión: v3.1.0
- * Descripción: Enrutador centralizado REST API con endpoints para borrado de posts,
- *              reportes con motivo y consulta pública de perfiles por username.
+ * Versión: v3.2.0
+ * Descripción: Enrutador centralizado REST API con alias de compatibilidad
+ *              (/auth/profile/:username, /auth/user/:username, /users/:username)
+ *              para eliminar respuestas 404 en todas las versiones de la App.
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
@@ -78,14 +79,19 @@ router.get('/auth/exists/:username', async (req, res) => {
   }
 });
 
-router.get('/auth/profile/:username', optionalAuthenticate, async (req, res) => {
+// ALIAS DE RUTA DE PERFIL DE USUARIO PARA COMPATIBILIDAD CON TODAS LAS VERSIONES
+const handleGetUserProfile = async (req, res) => {
   try {
     const data = await authService.getUserByUsername(req.params.username);
     res.json({ success: true, data });
   } catch (error) {
     res.status(404).json({ success: false, error: error.message });
   }
-});
+};
+
+router.get('/auth/profile/:username', optionalAuthenticate, handleGetUserProfile);
+router.get('/auth/user/:username', optionalAuthenticate, handleGetUserProfile);
+router.get('/users/:username', optionalAuthenticate, handleGetUserProfile);
 
 router.post('/auth/refresh', async (req, res) => {
   try {
@@ -134,6 +140,15 @@ router.get('/schools/municipalities', async (req, res) => {
 });
 
 router.get('/schools', async (req, res) => {
+  try {
+    const data = await schoolService.getSchools(req.query.municipalityId);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/schools/institutions', async (req, res) => {
   try {
     const data = await schoolService.getSchools(req.query.municipalityId);
     res.json({ success: true, data });
@@ -351,6 +366,15 @@ router.get('/profile/stats', authenticate, async (req, res) => {
 
 // --- VERSIONES ---
 router.get('/versions/latest', async (req, res) => {
+  try {
+    const data = await versionService.getLatestVersion();
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/version/latest', async (req, res) => {
   try {
     const data = await versionService.getLatestVersion();
     res.json({ success: true, data });
