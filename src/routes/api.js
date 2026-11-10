@@ -142,6 +142,15 @@ router.get('/schools', async (req, res) => {
   }
 });
 
+router.get('/schools/responsibilities', async (req, res) => {
+  try {
+    const data = await schoolService.getResponsibilities();
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/groups', async (req, res) => {
   try {
     const data = await schoolService.getGroups(req.query.schoolId);
