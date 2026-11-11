@@ -219,13 +219,17 @@ export async function deletePost(postId, userId) {
     .from('posts')
     .select('author_id')
     .eq('id', postId)
-    .single();
+    .maybeSingle();
 
-  if (fetchError) throw new Error('Publicación inexistente');
-  if (post.author_id !== userId) throw new Error('Borrador no autorizado');
+  if (fetchError || !post) throw new Error('Publicación inexistente');
+  if (post.author_id !== userId) throw new Error('No tienes permiso para eliminar esta publicación');
 
   const { error } = await client.from('posts').delete().eq('id', postId);
-  if (error) throw new Error('Fallo al eliminar de la DB');
+  if (error) {
+    logError(`❌ Error al eliminar post ${postId} de DB2`, error);
+    throw new Error('Fallo al eliminar de la base de datos');
+  }
+  log(`✅ Post ${postId} eliminado con éxito de DB2 por usuario ${userId}`, 'INFO');
   return { success: true };
 }
 
@@ -235,9 +239,26 @@ export async function reportPost(postId, userId, reason = '') {
     .from('posts')
     .select('id')
     .eq('id', postId)
-    .single();
+    .maybeSingle();
 
-  if (fetchError) throw new Error('Post no encontrado');
+  if (fetchError || !post) throw new Error('Post no encontrado');
+
+  const { error } = await client
+    .from('reports')
+    .insert({
+      post_id: postId,
+      reporter_id: userId,
+      reason: String(reason || 'Sin razón especificada').trim()
+    });
+
+  if (error) {
+    logError(`❌ Fallo al guardar reporte en DB2 para post ${postId}`, error);
+    throw new Error(`Fallo al enviar denuncia: ${error.message}`);
+  }
+
+  log(`✅ Denuncia registrada en DB2 para post ${postId} por usuario ${userId}`, 'INFO');
+  return { success: true };
+}
 
   const { error } = await client
     .from('reports')
