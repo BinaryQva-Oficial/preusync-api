@@ -2,9 +2,9 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: event.service.js
- * Versión: v2.0.0
+ * Versión: v2.1.0
  * Descripción: Servicio de gestión de eventos (escolares y externos).
- *              Vinculado al nodo especializado dbNews (DB 5).
+ *              Soporta getSchoolEvents y getExternalEvents para el cliente Android.
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
@@ -16,7 +16,7 @@ import { uploadImage } from '../utils/storage.js';
 const log = (message, level = 'INFO', metadata = {}) => {
   const timestamp = new Date().toISOString();
   const metaStr = Object.keys(metadata).length ? ` | ${JSON.stringify(metadata)}` : '';
-  console.log(`[${timestamp}] [EventService] [${level}] ${message}${metaStr}`);
+  console.log(`[${timestamp}] [EventService-DB5] [${level}] ${message}${metaStr}`);
 };
 
 const logError = (message, error, metadata = {}) => {
@@ -127,6 +127,14 @@ export async function getEventsRange(eventType = 'school', start = 0, count = 10
     eventType: row.event_type,
     createdAt: row.created_at
   }));
+}
+
+export async function getSchoolEvents(schoolId = null, start = 0, count = 10) {
+  return await getEventsRange('school', start, count, schoolId);
+}
+
+export async function getExternalEvents(schoolId = null, start = 0, count = 10) {
+  return await getEventsRange('external', start, count, schoolId);
 }
 
 export async function getEventById(eventId) {
