@@ -2,58 +2,57 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: reports.service.js
- * Versión: v2.0.0
- * Descripción: Servicio para la gestión de reportes de errores y denuncias de posts.
- *              Guarda en la tabla bug_reports con la columna 'error' correcta.
+ * Versión: v3.0.0
+ * Descripción: Servicio para la gestión de reportes de errores en DB1 (dbEdu).
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
  */
 
-import { supabaseAdmin } from '../config/supabase.js';
+import { dbEdu, supabaseAdmin, supabase } from '../config/supabase.js';
 
 const log = (message, level = 'INFO', metadata = {}) => {
   const timestamp = new Date().toISOString();
   const metaStr = Object.keys(metadata).length ? ` | ${JSON.stringify(metadata)}` : '';
-  console.log(`[${timestamp}] [ReportsService] [${level}] ${message}${metaStr}`);
+  console.log(`[${timestamp}] [ReportsService-DB1] [${level}] ${message}${metaStr}`);
 };
 
 const logError = (message, error, metadata = {}) => {
-  log(`${message}: ${error.message}`, 'ERROR', { ...metadata, stack: error.stack });
+  log(`${message}: ${error ? error.message : 'Error desconocido'}`, 'ERROR', { ...metadata, stack: error?.stack });
 };
 
 /**
- * Registra un nuevo reporte o denuncia en Supabase bug_reports y opcionalmente en GitHub.
+ * Registra un nuevo reporte de error en DB1 (dbEdu) bug_reports.
  */
 export async function createReport(reportData, userId = null) {
-  const title = reportData.title || 'Reporte de usuario';
-  const desc = reportData.description || reportData.reason || reportData.error || 'Sin descripción';
+  const title = reportData.title || 'Reporte de error';
+  const desc = reportData.description || reportData.user_description || reportData.reason || reportData.error || 'Sin descripción';
   const deviceInfo = reportData.deviceInfo || reportData.device_info || 'AndroidApp';
-  const stackTrace = reportData.stackTrace || reportData.stack_trace || '';
+  const stackTrace = reportData.stackTrace || reportData.stack_trace || reportData.error || '';
 
-  // 1. Almacenamiento en Supabase bug_reports usando la columna 'error' real de la tabla
+  const client = dbEdu || supabaseAdmin || supabase;
   const reportRow = {
-    title: String(title).trim(),
-    error: String(desc).trim(),
+    user_description: String(`${title} - ${desc}`).trim(),
+    error_log: String(stackTrace).trim(),
     device_info: String(deviceInfo).trim(),
     user_id: userId,
     status: 'pending'
   };
 
-  const { data: dbRecord, error: dbError } = await supabaseAdmin
+  const { data: dbRecord, error: dbError } = await client
     .from('bug_reports')
     .insert([reportRow])
     .select()
     .single();
 
   if (dbError) {
-    logError('❌ Error al guardar el reporte en Supabase', dbError);
+    logError('❌ Error al guardar el reporte en Supabase DB1', dbError);
     throw new Error(`Fallo DB al reportar: ${dbError.message}`);
   }
 
-  log(`✅ Reporte/Denuncia guardado en Supabase (ID: ${dbRecord.id})`, 'INFO');
+  log(`✅ Reporte guardado en Supabase DB1 (ID: ${dbRecord.id})`, 'INFO');
 
-  // 2. Integración con GitHub: Crea un Issue de forma automatizada.
+  // Integración con GitHub opcional
   const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
   const GITHUB_OWNER = process.env.GITHUB_OWNER;
   const GITHUB_REPO = process.env.GITHUB_REPO;
@@ -67,13 +66,8 @@ ${desc}
 ### Información del Dispositivo
 ${deviceInfo}
 
-### Stack Trace
-\`\`\`
-${stackTrace || 'No disponible'}
-\`\`\`
-
 ---
-**Reporte ID (Supabase):** ${dbRecord.id}
+**Reporte ID:** ${dbRecord.id}
 **Usuario ID:** ${userId || 'Anónimo'}
       `;
 
@@ -94,11 +88,6 @@ ${stackTrace || 'No disponible'}
       const ghData = await response.json();
       if (response.ok) {
         log(`🚀 GitHub Issue creado exitosamente: ${ghData.html_url}`);
-        await supabaseAdmin
-          .from('bug_reports')
-          .update({ github_issue_url: ghData.html_url, status: 'sent' })
-          .eq('id', dbRecord.id);
-
         return { success: true, reportId: dbRecord.id, githubUrl: ghData.html_url };
       }
     } catch (ghError) {
