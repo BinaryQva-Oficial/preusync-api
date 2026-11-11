@@ -2,10 +2,9 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: api.js
- * Versión: v3.2.0
- * Descripción: Enrutador centralizado REST API con alias de compatibilidad
- *              (/auth/profile/:username, /auth/user/:username, /users/:username)
- *              para eliminar respuestas 404 en todas las versiones de la App.
+ * Versión: v3.3.0
+ * Descripción: Enrutador centralizado REST API con alias universales de borrado
+ *              (DELETE /posts/:id, POST /posts/:id/delete) y reportes.
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
@@ -79,7 +78,6 @@ router.get('/auth/exists/:username', async (req, res) => {
   }
 });
 
-// ALIAS DE RUTA DE PERFIL DE USUARIO PARA COMPATIBILIDAD CON TODAS LAS VERSIONES
 const handleGetUserProfile = async (req, res) => {
   try {
     const data = await authService.getUserByUsername(req.params.username);
@@ -223,14 +221,17 @@ router.post('/posts', authenticate, async (req, res) => {
   }
 });
 
-router.delete('/posts/:id', authenticate, async (req, res) => {
+const handleDeletePost = async (req, res) => {
   try {
     const data = await postService.deletePost(req.params.id, req.user.id);
     res.json({ success: true, data });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }
-});
+};
+
+router.delete('/posts/:id', authenticate, handleDeletePost);
+router.post('/posts/:id/delete', authenticate, handleDeletePost);
 
 router.post('/posts/:id/vote', authenticate, async (req, res) => {
   try {
@@ -241,14 +242,16 @@ router.post('/posts/:id/vote', authenticate, async (req, res) => {
   }
 });
 
-router.post('/posts/:id/report', authenticate, async (req, res) => {
+const handleReportPost = async (req, res) => {
   try {
     const data = await postService.reportPost(req.params.id, req.user.id, req.body.reason);
     res.json({ success: true, data });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }
-});
+};
+
+router.post('/posts/:id/report', authenticate, handleReportPost);
 
 router.get('/profile/votes', authenticate, async (req, res) => {
   try {
