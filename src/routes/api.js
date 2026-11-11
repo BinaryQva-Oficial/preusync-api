@@ -20,6 +20,7 @@ import * as eventService from '../services/event.service.js';
 import * as ephemerisService from '../services/ephemeris.service.js';
 import * as voteService from '../services/vote.service.js';
 import * as telemetryService from '../services/telemetry.service.js';
+import * as versionService from '../services/version.service.js';
 import * as reportsService from '../services/reports.service.js';
 import { authenticate, optionalAuthenticate } from '../middleware/auth.js';
 
@@ -367,15 +368,13 @@ router.get('/profile/stats', authenticate, async (req, res) => {
 });
 
 // --- VERSIONES ---
-const handleGetLatestVersion = (req, res) => {
-  res.json({
-    success: true,
-    data: {
-      versionCode: 2755,
-      versionName: 'v0.99.115 Beta',
-      details: 'Puntos de actualización, resiliencia offline y corrección de votos.'
-    }
-  });
+const handleGetLatestVersion = async (req, res) => {
+  try {
+    const data = await versionService.getLatestVersion();
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 };
 
 router.get('/versions/latest', handleGetLatestVersion);
