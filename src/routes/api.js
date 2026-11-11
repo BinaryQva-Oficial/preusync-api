@@ -2,9 +2,9 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: api.js
- * Versión: v3.3.0
- * Descripción: Enrutador centralizado REST API con alias universales de borrado
- *              (DELETE /posts/:id, POST /posts/:id/delete) y reportes.
+ * Versión: v3.4.0
+ * Descripción: Enrutador centralizado REST API con eliminación de importación
+ *              inexistente version.service.js para prevenir crashes en Render.
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
@@ -20,7 +20,6 @@ import * as eventService from '../services/event.service.js';
 import * as ephemerisService from '../services/ephemeris.service.js';
 import * as voteService from '../services/vote.service.js';
 import * as telemetryService from '../services/telemetry.service.js';
-import * as versionService from '../services/version.service.js';
 import * as reportsService from '../services/reports.service.js';
 import { authenticate, optionalAuthenticate } from '../middleware/auth.js';
 
@@ -368,22 +367,18 @@ router.get('/profile/stats', authenticate, async (req, res) => {
 });
 
 // --- VERSIONES ---
-router.get('/versions/latest', async (req, res) => {
-  try {
-    const data = await versionService.getLatestVersion();
-    res.json({ success: true, data });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+const handleGetLatestVersion = (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      versionCode: 2755,
+      versionName: 'v0.99.115 Beta',
+      details: 'Puntos de actualización, resiliencia offline y corrección de votos.'
+    }
+  });
+};
 
-router.get('/version/latest', async (req, res) => {
-  try {
-    const data = await versionService.getLatestVersion();
-    res.json({ success: true, data });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+router.get('/versions/latest', handleGetLatestVersion);
+router.get('/version/latest', handleGetLatestVersion);
 
 export default router;
