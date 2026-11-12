@@ -3,217 +3,215 @@
  * Proyecto: PreuSync API
  * Archivo: auth.service.js
  * Versión: v3.0.0
- * Descripción: Servicio de autenticación aislado 100% exclusivo para dbAuth (DB 3).
+ * Descripción: Servicio de autenticación y gestión de usuarios en DB3 Auth con
+ *              resolución enriquecida de escuela, municipio y provincia desde DB1 Edu.
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
  */
 
-import { supabase, dbAuth } from '../config/supabase.js';
+import { supabase, dbAuth, dbEdu, supabaseAdmin } from '../config/supabase.js';
 
 const log = (message, level = 'INFO', metadata = {}) => {
   const timestamp = new Date().toISOString();
   const metaStr = Object.keys(metadata).length ? ` | ${JSON.stringify(metadata)}` : '';
-  console.log(`[${timestamp}] [AuthService-DB3] [${level}] ${message}${metaStr}`);
+  console.log(`[${timestamp}] [AuthService] [${level}] ${message}${metaStr}`);
 };
 
 const logError = (message, error, metadata = {}) => {
-  log(`${message}: ${error.message}`, 'ERROR', { ...metadata, stack: error.stack });
+  log(`${message}: ${error ? error.message : 'Error desconocido'}`, 'ERROR', { ...metadata, stack: error?.stack });
 };
 
-// ==================== REGISTRO (SIGNUP) ====================
+// ==================== OPERACIONES DE REGISTRO E INGRESO ====================
 
-/**
- * Registra un nuevo usuario creando la cuenta en Auth y el perfil EXCLUSIVAMENTE en dbAuth (DB 3).
- */
-export async function signUp(username, password, userData) {
-  log(`🔐 Registro en DB 3 (dbAuth) para: ${username}`);
+export async function signUp(username, password, extraData = {}) {
+  if (!username || !password) throw new Error('Se requiere usuario y contraseña');
 
-  // 1. Comprobar unicidad en dbAuth (DB 3)
-  const { data: existingUser } = await dbAuth
+  const clientAuth = dbAuth || supabaseAdmin || supabase;
+  const { data: existing } = await clientAuth
     .from('profiles')
-    .select('username')
-    .ilike('username', username.trim())
+    .select('id')
+    .ilike('username', username)
     .maybeSingle();
 
-  if (existingUser) throw new Error('El nombre de usuario ya está en uso');
+  if (existing) throw new Error('El nombre de usuario ya está registrado');
 
-  if (userData.idCard) {
-    const { data: existingId } = await dbAuth
-      .from('profiles')
-      .select('id_card')
-      .eq('id_card', userData.idCard)
-      .maybeSingle();
+  const email = extraData.email || `${username.toLowerCase().trim()}@preusync.com`;
+  const fullName = `${extraData.firstName || ''} ${extraData.lastName || ''}`.trim() || username;
 
-    if (existingId) throw new Error('El número de carnet ya está registrado');
-  }
+  let authUser = null;
+  let sessionToken = '';
+  let refreshToken = '';
 
-  const email = `${username.trim()}@preusync.com`.toLowerCase();
-  let userId = null;
-  let sessionToken = null;
-  let refreshToken = null;
+  try {
+    const { data: adminData, error: adminErr } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        username,
+        firstName: extraData.firstName || '',
+        lastName: extraData.lastName || '',
+        idCard: extraData.idCard || '',
+        role: extraData.role || 'student',
+        schoolId: extraData.schoolId || '',
+        groupId: extraData.groupId || '',
+        tutee: extraData.tutee || '',
+        responsibilities: extraData.responsibilities || '',
+        avatar: extraData.avatar || ''
+      }
+    });
 
-  const metadataPayload = {
-    username: username.trim(),
-    firstName: userData.firstName || '',
-    lastName: userData.lastName || '',
-    idCard: userData.idCard || '',
-    role: userData.role || 'student',
-    schoolId: userData.schoolId || null,
-    groupId: userData.groupId || null,
-    avatar: userData.avatar || '',
-    tutee: userData.tutee || '',
-    responsibilities: userData.responsibilities || ''
-  };
+    if (adminErr) throw adminErr;
+    authUser = adminData.user;
 
-  // Creación instantánea en GoTrue Auth (0.2s)
-  const { data: signUpData, error: authError } = await supabase.auth.signUp({
-    email,
-    password,
-    options: { data: metadataPayload }
-  });
-
-  if (authError) {
-    const errText = authError.message ? authError.message.toLowerCase() : '';
-    if (errText.includes('already registered') || errText.includes('already exists')) {
-      log(`⚠️ Usuario ${username} ya registrado en Auth. Recuperando sesión...`, 'WARN');
-      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-      if (signInError) throw new Error('El nombre de usuario ya está registrado');
-      userId = signInData.user.id;
-      sessionToken = signInData.session.access_token;
-      refreshToken = signInData.session.refresh_token;
-    } else {
-      logError(`❌ Fallo en registro Auth para ${email}`, authError);
-      throw new Error(authError.message);
+    const { data: loginData } = await supabase.auth.signInWithPassword({ email, password });
+    if (loginData && loginData.session) {
+      sessionToken = loginData.session.access_token;
+      refreshToken = loginData.session.refresh_token;
     }
-  } else {
-    userId = signUpData.user.id;
-    sessionToken = signUpData.session?.access_token || null;
-    refreshToken = signUpData.session?.refresh_token || null;
+  } catch (err) {
+    logError('Error al crear usuario en Supabase Auth', err);
+    throw new Error(`Fallo al registrar usuario: ${err.message}`);
   }
 
-  // 2. Guardar perfil STRICTAMENTE en dbAuth (DB 3)
-  const profile = {
-    id: userId,
+  const profileRow = {
+    id: authUser.id,
     username: username.trim(),
-    first_name: userData.firstName || '',
-    last_name: userData.lastName || '',
-    full_name: ((userData.firstName || '').trim() + ' ' + (userData.lastName || '').trim()).trim(),
-    id_card: userData.idCard || '',
-    role: userData.role || 'student',
+    first_name: extraData.firstName || '',
+    last_name: extraData.lastName || '',
+    full_name: fullName,
+    id_card: extraData.idCard || '',
+    role: extraData.role || 'student',
     status: 'verified',
-    avatar_url: userData.avatar || '',
-    school_id: userData.schoolId || null,
-    group_id: userData.groupId || null,
-    tutee: userData.tutee || '',
-    responsibilities: userData.responsibilities || ''
+    avatar_url: extraData.avatar || '',
+    school_id: extraData.schoolId || '',
+    group_id: extraData.groupId || '',
+    tutee: extraData.tutee || '',
+    responsibilities: extraData.responsibilities || ''
   };
 
-  log(`💾 Guardando perfil en DB 3 (dbAuth) para ${username}...`, 'INFO');
-
-  const { error: insertError } = await dbAuth.from('profiles').upsert(profile);
-  if (insertError) {
-    logError(`❌ Error al crear perfil en DB 3 (dbAuth): ${userId}`, insertError);
-    throw new Error(`Fallo en la creación del perfil en DB3: ${insertError.message}`);
+  const { error: profErr } = await clientAuth.from('profiles').insert(profileRow);
+  if (profErr) {
+    logError('Error al crear perfil en DB3', profErr);
+    await clientAuth.from('profiles').upsert(profileRow);
   }
 
-  log(`✅ Perfil registrado EXCLUSIVAMENTE en DB 3 (dbAuth) para ${username} (ID: ${userId})`, 'INFO');
+  log(`✅ Usuario ${username} registrado exitosamente con ID: ${authUser.id}`, 'INFO');
+
   return {
-    user: { id: userId, email, user_metadata: metadataPayload },
-    profile,
+    user: authUser,
+    profile: profileRow,
     sessionToken,
     refreshToken
   };
 }
 
-// ==================== INICIO DE SESIÓN (LOGIN) ====================
-
 export async function login(username, password) {
-  log(`🔐 Login en DB 3 (dbAuth) para: ${username}`);
+  if (!username || !password) throw new Error('Se requiere usuario y contraseña');
 
-  // 1. Verificación previa de existencia en dbAuth (DB 3)
-  const { data: userExists } = await dbAuth
-    .from('profiles')
-    .select('id')
-    .ilike('username', username.trim())
-    .maybeSingle();
-
-  if (!userExists) {
-    log(`⚠️ Usuario inexistente en DB 3: ${username}`, 'WARN');
-    throw new Error('AUTH_USER_NOT_FOUND');
-  }
-
-  // 2. Validación con Supabase Auth
-  const email = `${username.trim()}@preusync.com`.toLowerCase();
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-
-  if (error) {
-    logError(`❌ Contraseña incorrecta para usuario: ${username}`, error);
-    throw new Error('AUTH_INVALID_PASSWORD');
-  }
-
-  // 3. Obtener perfil de dbAuth (DB 3)
-  let { data: profile } = await dbAuth
+  const clientAuth = dbAuth || supabaseAdmin || supabase;
+  const { data: profile } = await clientAuth
     .from('profiles')
     .select('*')
-    .ilike('username', username.trim())
+    .ilike('username', username)
     .maybeSingle();
 
-  if (!profile) {
-    const meta = data.user.user_metadata || {};
-    const fName = meta.firstName || meta.first_name || username.trim();
-    const lName = meta.lastName || meta.last_name || '';
+  if (!profile) throw new Error('AUTH_USER_NOT_FOUND');
 
-    const fallbackProfile = {
-      id: data.user.id,
-      username: username.trim(),
-      first_name: fName,
-      last_name: lName,
-      full_name: (fName + ' ' + lName).trim(),
-      id_card: meta.idCard || meta.id_card || '',
-      role: meta.role || 'student',
-      status: 'verified',
-      avatar_url: meta.avatar || meta.avatar_url || '',
-      school_id: meta.schoolId || meta.school_id || null,
-      group_id: meta.groupId || meta.group_id || null,
-      tutee: meta.tutee || '',
-      responsibilities: meta.responsibilities || ''
-    };
+  const email = `${username.toLowerCase().trim()}@preusync.com`;
+  const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({ email, password });
 
-    await dbAuth.from('profiles').upsert(fallbackProfile);
-    profile = fallbackProfile;
-  }
+  if (loginErr) throw new Error('AUTH_INVALID_PASSWORD');
 
-  if (profile.status === 'banned') {
-    throw new Error('Esta cuenta ha sido suspendida');
-  }
+  const enrichedProfile = await getUserByUsername(username);
 
-  log(`✅ Login exitoso en DB 3 para ${username}`, 'INFO');
   return {
-    user: data.user,
-    profile,
-    sessionToken: data.session.access_token,
-    refreshToken: data.session.refresh_token
+    user: loginData.user,
+    profile: enrichedProfile,
+    sessionToken: loginData.session.access_token,
+    refreshToken: loginData.session.refresh_token
   };
 }
 
-// ==================== PERFILES PÚBLICOS ====================
+// ==================== PERFILES PÚBLICOS ENRIQUECIDOS ====================
 
 export async function getUserByUsername(username) {
-  const { data, error } = await dbAuth
+  const clientAuth = dbAuth || supabaseAdmin || supabase;
+  const { data, error } = await clientAuth
     .from('profiles')
     .select('*')
     .ilike('username', username)
     .maybeSingle();
 
   if (error || !data) throw new Error('Usuario no encontrado');
-  return data;
+
+  // FIX PERFIL: Resolver nombres reales de escuela, municipio, provincia y grupo desde DB1 (dbEdu)
+  const clientEdu = dbEdu || supabaseAdmin || supabase;
+  let schoolName = '';
+  let munName = '';
+  let provName = '';
+  let groupName = data.group || '';
+
+  if (data.school_id) {
+    try {
+      const { data: schools } = await clientEdu
+        .from('schools')
+        .select('name, municipality_id')
+        .eq('id', data.school_id)
+        .maybeSingle();
+
+      if (schools) {
+        schoolName = schools.name || '';
+        if (schools.municipality_id) {
+          const { data: muns } = await clientEdu
+            .from('municipalities')
+            .select('name, province_id')
+            .eq('id', schools.municipality_id)
+            .maybeSingle();
+
+          if (muns) {
+            munName = muns.name || '';
+            if (muns.province_id) {
+              const { data: provs } = await clientEdu
+                .from('provinces')
+                .select('name')
+                .eq('id', muns.province_id)
+                .maybeSingle();
+
+              if (provs) provName = provs.name || '';
+            }
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (data.group_id && !groupName) {
+    try {
+      const { data: grp } = await clientEdu
+        .from('school_groups')
+        .select('name')
+        .eq('id', data.group_id)
+        .maybeSingle();
+      if (grp) groupName = grp.name || '';
+    } catch (e) {}
+  }
+
+  return {
+    ...data,
+    school: schoolName || data.school || '',
+    municipality: munName || data.municipality || '',
+    province: provName || data.province || '',
+    group: groupName || data.group || ''
+  };
 }
 
 // ==================== ACTUALIZACIÓN DE DATOS ====================
 
 export async function updateUser(userId, updateData) {
-  const { data: existing, error: fetchError } = await dbAuth
+  const clientAuth = dbAuth || supabaseAdmin || supabase;
+  const { data: existing, error: fetchError } = await clientAuth
     .from('profiles')
     .select('*')
     .eq('id', userId)
@@ -226,7 +224,7 @@ export async function updateUser(userId, updateData) {
   allowedFields.forEach(f => { if (updateData[f] !== undefined) updated[f] = updateData[f]; });
 
   if (updateData.username && updateData.username !== existing.username) {
-    const { data: conflict } = await dbAuth
+    const { data: conflict } = await clientAuth
       .from('profiles')
       .select('id')
       .ilike('username', updateData.username)
@@ -236,13 +234,14 @@ export async function updateUser(userId, updateData) {
   }
 
   if (updateData.first_name !== undefined || updateData.last_name !== undefined) {
-    updated.full_name = (updated.first_name || '') + ' ' + (updated.last_name || '');
+    updated.full_name = `${updated.first_name || ''} ${updated.last_name || ''}`.trim();
   }
 
-  await dbAuth.from('profiles').update(updated).eq('id', userId);
+  await clientAuth.from('profiles').update(updated).eq('id', userId);
 
   log(`✅ Perfil actualizado en DB 3 para: ${userId}`, 'INFO');
-  return { success: true, data: updated };
+  const enriched = await getUserByUsername(updated.username);
+  return { success: true, data: enriched };
 }
 
 // ==================== GESTIÓN DE SESIONES ====================
@@ -260,42 +259,37 @@ export async function refreshSession(refreshToken) {
   };
 }
 
-export async function logout(userId) {
-  return { success: true };
-}
-
-export async function verifyPassword(username, password) {
-  const email = `${username}@preusync.com`.toLowerCase();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-  return { valid: !error };
-}
-
 export async function checkUsernameExists(username) {
-  const { data } = await dbAuth
+  const clientAuth = dbAuth || supabaseAdmin || supabase;
+  const { data } = await clientAuth
     .from('profiles')
-    .select('username')
+    .select('id')
     .ilike('username', username)
     .maybeSingle();
 
   return { exists: !!data };
 }
 
-// ==================== ELIMINACIÓN DE CUENTA ====================
+export async function verifyPassword(username, password) {
+  const email = `${username.toLowerCase().trim()}@preusync.com`;
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error || !data.user) throw new Error('Contraseña incorrecta');
+  return true;
+}
 
 export async function deleteAccount(userId, password) {
-  const { data: profile, error: fetchError } = await dbAuth
+  const clientAuth = dbAuth || supabaseAdmin || supabase;
+  const { data: profile } = await clientAuth
     .from('profiles')
     .select('username')
     .eq('id', userId)
     .single();
 
-  if (fetchError || !profile) throw new Error('Perfil no encontrado');
+  if (!profile) throw new Error('Usuario no encontrado');
+  await verifyPassword(profile.username, password);
 
-  const { valid } = await verifyPassword(profile.username, password);
-  if (!valid) throw new Error('Contraseña incorrecta');
+  await clientAuth.from('profiles').delete().eq('id', userId);
+  await supabaseAdmin.auth.admin.deleteUser(userId);
 
-  await dbAuth.from('profiles').delete().eq('id', userId);
-
-  log(`✅ Cuenta eliminada de DB 3 para: ${userId}`, 'INFO');
   return { success: true };
 }
