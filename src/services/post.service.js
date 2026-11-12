@@ -236,17 +236,28 @@ export async function getUserStats(userId) {
 
   const { data: sums } = await client
     .from('posts')
-    .select('likes')
+    .select('likes, dislikes')
     .eq('author_id', userId);
 
   let totalLikes = 0;
-  if (sums) {
+  let totalDislikes = 0;
+  if (sums && Array.isArray(sums)) {
     sums.forEach(post => {
       totalLikes += post.likes || 0;
+      totalDislikes += post.dislikes || 0;
     });
   }
 
-  return { postCount: postCount || 0, totalLikes, totalDislikes: 0 };
+  log(`📊 Estadísticas reales DB2: posts=${postCount}, likes=${totalLikes}, dislikes=${totalDislikes}`, 'INFO');
+
+  return {
+    postCount: postCount || 0,
+    totalLikes: totalLikes || 0,
+    totalDislikes: totalDislikes || 0,
+    postsCount: postCount || 0,
+    likesCount: totalLikes || 0,
+    dislikesCount: totalDislikes || 0
+  };
 }
 
 /**
