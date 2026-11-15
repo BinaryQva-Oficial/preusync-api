@@ -348,6 +348,24 @@ router.get('/reports', optionalAuthenticate, async (req, res) => {
   }
 });
 
+router.get('/reports/posts', optionalAuthenticate, async (req, res) => {
+  try {
+    const data = await reportsService.getPostReports();
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.delete('/reports/posts/:id', authenticate, async (req, res) => {
+  try {
+    const data = await reportsService.deletePostReport(req.params.id);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
 router.post('/reports', optionalAuthenticate, async (req, res) => {
   try {
     const data = await reportsService.createReport(req.body, req.user?.id);

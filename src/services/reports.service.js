@@ -2,25 +2,99 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: reports.service.js
- * Versión: v3.1.0
- * Descripción: Servicio para la gestión de reportes de errores en DB1 (dbEdu).
- *              Soporta getReports(), createReport() y deleteReport().
+ * Versión: v4.0.0
+ * Descripción: Servicio de gestión de reportes de errores en DB1 (dbEdu) y
+ *              denuncias de publicaciones comunitarias en DB2 (dbCommunity).
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
  */
 
-import { dbEdu, supabaseAdmin, supabase } from '../config/supabase.js';
+import { dbEdu, dbCommunity, dbAuth, supabaseAdmin, supabase } from '../config/supabase.js';
 
 const log = (message, level = 'INFO', metadata = {}) => {
   const timestamp = new Date().toISOString();
   const metaStr = Object.keys(metadata).length ? ` | ${JSON.stringify(metadata)}` : '';
-  console.log(`[${timestamp}] [ReportsService-DB1] [${level}] ${message}${metaStr}`);
+  console.log(`[${timestamp}] [ReportsService] [${level}] ${message}${metaStr}`);
 };
 
 const logError = (message, error, metadata = {}) => {
   log(`${message}: ${error ? error.message : 'Error desconocido'}`, 'ERROR', { ...metadata, stack: error?.stack });
 };
+
+/**
+ * Consulta las denuncias de publicaciones comunitarias guardadas en DB2 (dbCommunity).
+ */
+export async function getPostReports() {
+  const clientComm = dbCommunity || supabaseAdmin || supabase;
+  const clientAuth = dbAuth || supabaseAdmin || supabase;
+
+  const { data: reports, error } = await clientComm
+    .from('reports')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    logError('❌ Error al consultar denuncias de posts en DB2', error);
+    throw new Error(`Fallo al consultar denuncias: ${error.message}`);
+  }
+
+  if (!reports || reports.length === 0) return [];
+
+  const postIds = [...new Set(reports.map(r => r.post_id).filter(Boolean))];
+  const reporterIds = [...new Set(reports.map(r => r.reporter_id).filter(Boolean))];
+
+  const postMap = new Map();
+  const userMap = new Map();
+
+  if (postIds.length > 0) {
+    const { data: posts } = await clientComm
+      .from('posts')
+      .select('id, title, details, author_id')
+      .in('id', postIds);
+    if (posts) posts.forEach(p => postMap.set(p.id, p));
+  }
+
+  if (reporterIds.length > 0) {
+    const { data: users } = await clientAuth
+      .from('profiles')
+      .select('id, username')
+      .in('id', reporterIds);
+    if (users) users.forEach(u => userMap.set(u.id, u.username));
+  }
+
+  return reports.map(r => {
+    const post = postMap.get(r.post_id);
+    const reporter = userMap.get(r.reporter_id);
+    return {
+      id: r.id,
+      post_id: r.post_id,
+      reporter_id: r.reporter_id,
+      reporter_username: reporter || 'Usuario',
+      post_title: post ? (post.title || post.details) : 'Publicación de la comunidad',
+      reason: r.reason || 'Sin razón especificada',
+      created_at: r.created_at
+    };
+  });
+}
+
+/**
+ * Elimina/descarta una denuncia de publicación en DB2 (dbCommunity).
+ */
+export async function deletePostReport(id) {
+  const clientComm = dbCommunity || supabaseAdmin || supabase;
+  const { error } = await clientComm
+    .from('reports')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    logError(`❌ Error al descartar denuncia ${id} en DB2`, error);
+    throw new Error(`Fallo al descartar denuncia: ${error.message}`);
+  }
+
+  return { success: true };
+}
 
 /**
  * Consulta la lista de todos los reportes de error guardados en DB1 (dbEdu).
