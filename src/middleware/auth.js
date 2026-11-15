@@ -54,7 +54,7 @@ export async function authenticate(req, res, next) {
       }
     } catch (e) {}
 
-    // 2. Fallback de decodificación JWT local si GoTrue no respondió o expiró
+    // 2. Fallback de decodificación JWT local si GoTrue no respondió, expiró o dio "JWT issued at future"
     if (!user) {
       try {
         const tokenParts = token.split('.');
@@ -62,13 +62,14 @@ export async function authenticate(req, res, next) {
           const payloadStr = Buffer.from(tokenParts[1], 'base64').toString('utf-8');
           const payload = JSON.parse(payloadStr);
           const now = Math.floor(Date.now() / 1000);
-          if (payload.sub && payload.exp && payload.exp > now) {
+          // Tolerancia de 5 minutos (300s) para iat/exp para prevenir errores por desincronización de reloj
+          if (payload.sub && (payload.exp === undefined || payload.exp + 300 > now)) {
             user = {
               id: payload.sub,
               email: payload.email || `${payload.sub}@preusync.com`,
               user_metadata: payload.user_metadata || {}
             };
-            log(`ℹ️ Usuario decodificado via JWT local para: ${user.id}`, 'INFO');
+            log(`ℹ️ Usuario decodificado via JWT local (tolerancia reloj) para: ${user.id}`, 'INFO');
           }
         }
       } catch (e) {}

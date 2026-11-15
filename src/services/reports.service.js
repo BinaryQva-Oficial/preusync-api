@@ -2,8 +2,9 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: reports.service.js
- * Versión: v3.0.0
+ * Versión: v3.1.0
  * Descripción: Servicio para la gestión de reportes de errores en DB1 (dbEdu).
+ *              Soporta getReports(), createReport() y deleteReport().
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
@@ -20,6 +21,42 @@ const log = (message, level = 'INFO', metadata = {}) => {
 const logError = (message, error, metadata = {}) => {
   log(`${message}: ${error ? error.message : 'Error desconocido'}`, 'ERROR', { ...metadata, stack: error?.stack });
 };
+
+/**
+ * Consulta la lista de todos los reportes de error guardados en DB1 (dbEdu).
+ */
+export async function getReports() {
+  const client = dbEdu || supabaseAdmin || supabase;
+  const { data, error } = await client
+    .from('bug_reports')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    logError('❌ Error al consultar bug_reports en DB1', error);
+    throw new Error(`Fallo al consultar reportes: ${error.message}`);
+  }
+
+  return data || [];
+}
+
+/**
+ * Elimina un reporte de error específico en DB1 (dbEdu).
+ */
+export async function deleteReport(id) {
+  const client = dbEdu || supabaseAdmin || supabase;
+  const { error } = await client
+    .from('bug_reports')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    logError(`❌ Error al eliminar reporte ${id} en DB1`, error);
+    throw new Error(`Fallo al eliminar reporte: ${error.message}`);
+  }
+
+  return { success: true };
+}
 
 /**
  * Registra un nuevo reporte de error en DB1 (dbEdu) bug_reports.

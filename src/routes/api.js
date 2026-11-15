@@ -339,10 +339,28 @@ router.post('/ephemeris', authenticate, async (req, res) => {
 });
 
 // --- REPORTES ---
+router.get('/reports', optionalAuthenticate, async (req, res) => {
+  try {
+    const data = await reportsService.getReports();
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.post('/reports', optionalAuthenticate, async (req, res) => {
   try {
     const data = await reportsService.createReport(req.body, req.user?.id);
     res.status(201).json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.delete('/reports/:id', authenticate, async (req, res) => {
+  try {
+    const data = await reportsService.deleteReport(req.params.id);
+    res.json({ success: true, data });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }
