@@ -2,9 +2,9 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: event.service.js
- * Versión: v2.1.0
- * Descripción: Servicio de gestión de eventos (escolares y externos).
- *              Soporta getSchoolEvents y getExternalEvents para el cliente Android.
+ * Versión: v3.0.0
+ * Descripción: Servicio de gestión de eventos (escolares y externos) con resúmenes
+ *              livianos para feeds y consulta completa de detalles por ID.
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
@@ -25,9 +25,6 @@ const logError = (message, error, metadata = {}) => {
 
 // ==================== CREACIÓN DE EVENTOS ====================
 
-/**
- * Registra un nuevo evento en la base de datos.
- */
 export async function addEvent(eventData, userId) {
   const required = ['title', 'details', 'date', 'time', 'location'];
   for (const field of required) {
@@ -89,13 +86,13 @@ export async function editEvent(eventId, userId, updateData) {
   return { success: true };
 }
 
-export async function deleteEvent(eventId, userId) {
+export async function deleteEvent(eventId) {
   const { error } = await dbNews.from('events').delete().eq('id', eventId);
   if (error) throw new Error('Fallo al eliminar el evento');
   return { success: true };
 }
 
-// ==================== CONSULTAS ====================
+// ==================== CONSULTAS LIVIANAS PARA FEEDS ====================
 
 export async function getEventsRange(eventType = 'school', start = 0, count = 10, schoolId = null) {
   if (!['school', 'external'].includes(eventType)) {
@@ -104,7 +101,7 @@ export async function getEventsRange(eventType = 'school', start = 0, count = 10
 
   let query = dbNews
     .from('events')
-    .select('*')
+    .select('id, title, image_url, date, time, location, event_type, created_at')
     .eq('event_type', eventType)
     .order('created_at', { ascending: false })
     .range(start, start + count - 1);
@@ -119,7 +116,6 @@ export async function getEventsRange(eventType = 'school', start = 0, count = 10
   return (data || []).map(row => ({
     id: row.id,
     title: row.title,
-    details: row.details,
     imageUrl: row.image_url,
     date: row.date,
     time: row.time,
@@ -137,6 +133,8 @@ export async function getExternalEvents(schoolId = null, start = 0, count = 10) 
   return await getEventsRange('external', start, count, schoolId);
 }
 
+// ==================== CONSULTA COMPLETA POR ID ====================
+
 export async function getEventById(eventId) {
   const { data, error } = await dbNews
     .from('events')
@@ -144,7 +142,7 @@ export async function getEventById(eventId) {
     .eq('id', eventId)
     .single();
 
-  if (error) throw new Error('El evento ya no está disponible');
+  if (error || !data) throw new Error('El evento ya no está disponible');
   return {
     id: data.id,
     title: data.title,

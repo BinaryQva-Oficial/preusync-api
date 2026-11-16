@@ -2,9 +2,9 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: news.service.js
- * Versión: v2.0.0
- * Descripción: Servicio para la gestión de noticias.
- *              Vinculado al nodo especializado dbNews (DB 5).
+ * Versión: v3.0.0
+ * Descripción: Servicio para la gestión de noticias con resúmenes livianos para feeds
+ *              y consulta completa de detalles por ID.
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
@@ -25,9 +25,6 @@ const logError = (message, error, metadata = {}) => {
 
 // ==================== CREACIÓN DE NOTICIAS ====================
 
-/**
- * Crea una nueva noticia en la base de datos.
- */
 export async function addNews(newsData, userId) {
   const required = ['headline', 'details', 'source'];
   for (const field of required) {
@@ -65,7 +62,7 @@ export async function addNews(newsData, userId) {
   return { id: data.id, imageUrl };
 }
 
-// ==================== EDICIÓN Y CONSULTA ====================
+// ==================== EDICIÓN Y BORRADO ====================
 
 export async function editNews(newsId, userId, updateData) {
   const { data: news, error: fetchError } = await dbNews
@@ -85,10 +82,18 @@ export async function editNews(newsId, userId, updateData) {
   return { success: true };
 }
 
+export async function deleteNews(newsId) {
+  const { error } = await dbNews.from('news').delete().eq('id', newsId);
+  if (error) throw new Error('Fallo al eliminar noticia');
+  return { success: true };
+}
+
+// ==================== CONSULTAS LIVIANAS PARA FEEDS ====================
+
 export async function getTopNews(limit = 5) {
   const { data, error } = await dbNews
     .from('news')
-    .select('*')
+    .select('id, headline, image_url, source, url, created_at')
     .order('created_at', { ascending: false })
     .limit(limit);
 
@@ -96,7 +101,6 @@ export async function getTopNews(limit = 5) {
   return (data || []).map(row => ({
     id: row.id,
     headline: row.headline || '',
-    details: row.details || '',
     imageUrl: row.image_url || '',
     source: row.source || 'PreuSync',
     url: row.url || '',
@@ -107,7 +111,7 @@ export async function getTopNews(limit = 5) {
 export async function getNewsRange(start = 0, count = 10) {
   const { data, error } = await dbNews
     .from('news')
-    .select('*')
+    .select('id, headline, image_url, source, url, created_at')
     .order('created_at', { ascending: false })
     .range(start, start + count - 1);
 
@@ -115,13 +119,14 @@ export async function getNewsRange(start = 0, count = 10) {
   return (data || []).map(row => ({
     id: row.id,
     headline: row.headline || '',
-    details: row.details || '',
     imageUrl: row.image_url || '',
     source: row.source || 'PreuSync',
     url: row.url || '',
     createdAt: row.created_at
   }));
 }
+
+// ==================== CONSULTA COMPLETA POR ID ====================
 
 export async function getNewsById(newsId) {
   const { data, error } = await dbNews
@@ -130,7 +135,7 @@ export async function getNewsById(newsId) {
     .eq('id', newsId)
     .single();
 
-  if (error) throw new Error('Noticia no encontrada');
+  if (error || !data) throw new Error('Noticia no encontrada');
   return {
     id: data.id,
     headline: data.headline || '',

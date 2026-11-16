@@ -2,10 +2,9 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: post.service.js
- * Versión: v3.2.0
- * Descripción: Servicio de gestión de publicaciones con resolución enriquecida
- *              multibase (DB2 Community <-> DB3 Auth) para nombres de usuario,
- *              avatares y estado exacto de userVote por usuario.
+ * Versión: v4.0.0
+ * Descripción: Servicio de gestión de publicaciones con resúmenes livianos para feeds
+ *              (omite detalles pesados) y consulta completa de Markdown por ID.
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
@@ -29,13 +28,8 @@ const logError = (message, error, metadata = {}) => {
 /**
  * Consulta en DB3 (dbAuth) los nombres de usuario y avatares reales para los author_id de DB2,
  * y en DB2 (dbCommunity) el estado del voto del usuario para cada post.
- *
- * 📌 COMENTARIO DE PRESERVACIÓN:
- * 1. La tabla 'posts' reside en DB2 (dbCommunity) y la tabla 'profiles' en DB3 (dbAuth).
- * 2. Al ser bases de datos aisladas en Supabase, PostgREST no puede realizar JOINs cross-database.
- * 3. Este helper resuelve en paralelo los usernames en DB3 y el userVote en DB2 en <5ms.
  */
-async function enrichPostsWithAuthors(posts, userId = null) {
+async function enrichPostsWithAuthors(posts, userId = null, includeDetails = false) {
   if (!posts || !Array.isArray(posts) || posts.length === 0) return posts || [];
 
   const authorIds = [...new Set(posts.map(p => p.author_id).filter(Boolean))];
@@ -46,7 +40,6 @@ async function enrichPostsWithAuthors(posts, userId = null) {
   const clientComm = dbCommunity || supabaseAdmin || supabase;
   const clientAuth = dbAuth || supabaseAdmin || supabase;
 
-  // 1. Obtener perfiles de autores reales desde DB3 Auth
   if (authorIds.length > 0) {
     try {
       const { data: profiles } = await clientAuth
@@ -62,7 +55,6 @@ async function enrichPostsWithAuthors(posts, userId = null) {
     }
   }
 
-  // 2. Obtener el voto del usuario actual para cada post desde DB2 Community
   if (userId && postIds.length > 0) {
     try {
       const { data: userVotes } = await clientComm
@@ -88,10 +80,9 @@ async function enrichPostsWithAuthors(posts, userId = null) {
   return posts.map(row => {
     const prof = profileMap.get(row.author_id);
     const vote = userVoteMap.get(row.id) || 'none';
-    return {
+    const result = {
       id: row.id,
       title: row.title || '',
-      details: row.details || '',
       imageUrl: row.image_url || '',
       author: prof?.username || row.author || 'Comunidad',
       authorAvatar: prof?.avatar_url || row.author_avatar || '',
@@ -101,14 +92,18 @@ async function enrichPostsWithAuthors(posts, userId = null) {
       userVote: vote,
       createdAt: row.created_at
     };
+
+    // Solo incluye 'details' (Markdown completo) si se solicita explícitamente en consultas por ID
+    if (includeDetails || row.details) {
+      result.details = row.details || '';
+    }
+
+    return result;
   });
 }
 
 // ==================== OPERACIONES CRUD ====================
 
-/**
- * Registra una nueva publicación de la comunidad en DB2.
- */
 export async function addPost(postData, userId) {
   if (!postData.title || !postData.details) {
     throw new Error('El título y los detalles son campos obligatorios');
@@ -145,9 +140,6 @@ export async function addPost(postData, userId) {
   return { id: data.id, imageUrl };
 }
 
-/**
- * Modifica el contenido de un post existente si el usuario es el autor.
- */
 export async function editPost(postId, userId, updateData) {
   const client = dbCommunity || supabaseAdmin || supabase;
   const { data: post, error: fetchError } = await client
@@ -171,37 +163,37 @@ export async function editPost(postId, userId, updateData) {
 // ==================== CONSULTAS Y LISTADOS ====================
 
 /**
- * Obtiene publicaciones destacadas resolviendo nombres de usuario reales desde DB3 y userVote desde DB2.
+ * Obtiene resúmenes livianos de publicaciones destacadas (omite details pesados).
  */
 export async function getTopPosts(limit = 5, userId = null) {
   const client = dbCommunity || supabaseAdmin || supabase;
   const { data, error } = await client
     .from('posts')
-    .select('*')
+    .select('id, title, image_url, author_id, likes, dislikes, score, created_at')
     .order('created_at', { ascending: false })
     .limit(limit);
 
   if (error) throw new Error(`Error al obtener posts top: ${error.message}`);
-  return await enrichPostsWithAuthors(data || [], userId);
+  return await enrichPostsWithAuthors(data || [], userId, false);
 }
 
 /**
- * Recupera un rango de publicaciones resolviendo nombres de usuario reales desde DB3 y userVote desde DB2.
+ * Recupera un rango de resúmenes livianos de publicaciones (omite details pesados).
  */
 export async function getPostsRange(start = 0, count = 10, userId = null) {
   const client = dbCommunity || supabaseAdmin || supabase;
   const { data, error } = await client
     .from('posts')
-    .select('*')
+    .select('id, title, image_url, author_id, likes, dislikes, score, created_at')
     .order('created_at', { ascending: false })
     .range(start, start + count - 1);
 
   if (error) throw new Error(`Error al obtener rango de posts: ${error.message}`);
-  return await enrichPostsWithAuthors(data || [], userId);
+  return await enrichPostsWithAuthors(data || [], userId, false);
 }
 
 /**
- * Obtiene todas las publicaciones de un usuario específico.
+ * Obtiene publicaciones de un usuario específico.
  */
 export async function getPostsByAuthor(authorId, start = 0, count = 10) {
   if (!authorId) throw new Error('Se requiere el ID del autor');
@@ -209,13 +201,31 @@ export async function getPostsByAuthor(authorId, start = 0, count = 10) {
   const client = dbCommunity || supabaseAdmin || supabase;
   const { data, error } = await client
     .from('posts')
-    .select('*')
+    .select('id, title, image_url, author_id, likes, dislikes, score, created_at')
     .eq('author_id', authorId)
     .order('created_at', { ascending: false })
     .range(start, start + count - 1);
 
   if (error) throw new Error(`Fallo al consultar publicaciones personales: ${error.message}`);
-  return await enrichPostsWithAuthors(data || [], authorId);
+  return await enrichPostsWithAuthors(data || [], authorId, false);
+}
+
+// ==================== CONSULTA COMPLETA POR ID ====================
+
+/**
+ * Obtiene la publicación completa con todo el texto 'details' (Markdown) bajo demanda.
+ */
+export async function getPostById(postId, userId = null) {
+  const client = dbCommunity || supabaseAdmin || supabase;
+  const { data, error } = await client
+    .from('posts')
+    .select('*')
+    .eq('id', postId)
+    .single();
+
+  if (error || !data) throw new Error('Post no disponible');
+  const enriched = await enrichPostsWithAuthors([data], userId, true);
+  return enriched[0];
 }
 
 // ==================== ESTADÍSTICAS, BORRADO Y DENUNCIAS ====================
@@ -248,8 +258,6 @@ export async function getUserStats(userId) {
     });
   }
 
-  log(`📊 Estadísticas reales DB2: posts=${postCount}, likes=${totalLikes}, dislikes=${totalDislikes}`, 'INFO');
-
   return {
     postCount: postCount || 0,
     totalLikes: totalLikes || 0,
@@ -260,10 +268,6 @@ export async function getUserStats(userId) {
   };
 }
 
-/**
- * 📌 COMENTARIO DE PRESERVACIÓN:
- * Elimina una publicación de la tabla 'posts' en DB2 (dbCommunity) previa verificación de autoría.
- */
 export async function deletePost(postId, userId) {
   const client = dbCommunity || supabaseAdmin || supabase;
   const { data: post, error: fetchError } = await client
@@ -284,10 +288,6 @@ export async function deletePost(postId, userId) {
   return { success: true };
 }
 
-/**
- * 📌 COMENTARIO DE PRESERVACIÓN:
- * Guarda una denuncia en la tabla 'reports' de DB2 (dbCommunity) con post_id, reporter_id y reason.
- */
 export async function reportPost(postId, userId, reason = '') {
   const client = dbCommunity || supabaseAdmin || supabase;
   const { data: post, error: fetchError } = await client
@@ -313,17 +313,4 @@ export async function reportPost(postId, userId, reason = '') {
 
   log(`✅ Denuncia registrada en DB2 para post ${postId} por usuario ${userId}`, 'INFO');
   return { success: true };
-}
-
-export async function getPostById(postId, userId = null) {
-  const client = dbCommunity || supabaseAdmin || supabase;
-  const { data, error } = await client
-    .from('posts')
-    .select('*')
-    .eq('id', postId)
-    .single();
-
-  if (error || !data) throw new Error('Post no disponible');
-  const enriched = await enrichPostsWithAuthors([data], userId);
-  return enriched[0];
 }

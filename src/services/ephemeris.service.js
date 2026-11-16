@@ -2,9 +2,9 @@
  * ============================================================================
  * Proyecto: PreuSync API
  * Archivo: ephemeris.service.js
- * Versión: v2.0.0
- * Descripción: Servicio de gestión de efemérides históricas y diarias.
- *              Vinculado al nodo especializado dbEphemeris (DB 4).
+ * Versión: v3.0.0
+ * Descripción: Servicio de gestión de efemérides históricas con resúmenes
+ *              livianos para feeds y consulta completa de detalles por ID.
  * Autor: JiroxDEV
  * Licensed under the GNU Affero General Public License v3
  * ============================================================================
@@ -25,9 +25,6 @@ const logError = (message, error, metadata = {}) => {
 
 // ==================== CREACIÓN DE EFEMÉRIDES ====================
 
-/**
- * Registra una nueva efeméride en el sistema.
- */
 export async function addEphemeris(ephemerisData, userId) {
   const required = ['title', 'details', 'day', 'month'];
   for (const field of required) {
@@ -91,13 +88,13 @@ export async function editEphemeris(ephemerisId, userId, updateData) {
   return { success: true };
 }
 
-export async function deleteEphemeris(ephemerisId, userId) {
+export async function deleteEphemeris(ephemerisId) {
   const { error } = await dbEphemeris.from('ephemerides').delete().eq('id', ephemerisId);
   if (error) throw new Error('Fallo al eliminar efeméride');
   return { success: true };
 }
 
-// ==================== CONSULTAS POR FECHA ====================
+// ==================== CONSULTAS LIVIANAS PARA FEEDS ====================
 
 export async function getEphemeridesByDate(dateStr, year = null) {
   if (!dateStr || !/^\d{2}\/\d{2}$/.test(dateStr)) {
@@ -106,7 +103,7 @@ export async function getEphemeridesByDate(dateStr, year = null) {
 
   let query = dbEphemeris
     .from('ephemerides')
-    .select('*')
+    .select('id, title, image_url, day, month, date, year, importance, created_at')
     .eq('date', dateStr)
     .order('importance', { ascending: false });
 
@@ -117,7 +114,6 @@ export async function getEphemeridesByDate(dateStr, year = null) {
   return (data || []).map(row => ({
     id: row.id,
     title: row.title,
-    details: row.details,
     imageUrl: row.image_url,
     day: row.day,
     month: row.month,
@@ -128,6 +124,8 @@ export async function getEphemeridesByDate(dateStr, year = null) {
   }));
 }
 
+// ==================== CONSULTA COMPLETA POR ID ====================
+
 export async function getEphemerisById(ephemerisId) {
   const { data, error } = await dbEphemeris
     .from('ephemerides')
@@ -135,7 +133,7 @@ export async function getEphemerisById(ephemerisId) {
     .eq('id', ephemerisId)
     .single();
 
-  if (error) throw new Error('Efeméride no encontrada');
+  if (error || !data) throw new Error('Efeméride no encontrada');
   return {
     id: data.id,
     title: data.title,

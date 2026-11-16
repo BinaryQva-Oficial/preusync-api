@@ -230,6 +230,15 @@ const handleDeletePost = async (req, res) => {
   }
 };
 
+router.get('/posts/:id', optionalAuthenticate, async (req, res) => {
+  try {
+    const data = await postService.getPostById(req.params.id, req.user?.id);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(404).json({ success: false, error: error.message });
+  }
+});
+
 router.delete('/posts/:id', authenticate, handleDeletePost);
 router.post('/posts/:id/delete', authenticate, handleDeletePost);
 
@@ -282,6 +291,15 @@ router.get('/news/range', async (req, res) => {
   }
 });
 
+router.get('/news/:id', async (req, res) => {
+  try {
+    const data = await newsService.getNewsById(req.params.id);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(404).json({ success: false, error: error.message });
+  }
+});
+
 router.post('/news', authenticate, async (req, res) => {
   try {
     const data = await newsService.addNews(req.body);
@@ -319,6 +337,15 @@ router.post('/events', authenticate, async (req, res) => {
   }
 });
 
+router.get('/events/:id', async (req, res) => {
+  try {
+    const data = await eventService.getEventById(req.params.id);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(404).json({ success: false, error: error.message });
+  }
+});
+
 // --- EFEMÉRIDES ---
 router.get('/ephemeris', async (req, res) => {
   try {
@@ -326,6 +353,15 @@ router.get('/ephemeris', async (req, res) => {
     res.json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/ephemeris/:id', async (req, res) => {
+  try {
+    const data = await ephemerisService.getEphemerisById(req.params.id);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(404).json({ success: false, error: error.message });
   }
 });
 
